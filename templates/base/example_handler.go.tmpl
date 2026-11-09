@@ -1,0 +1,191 @@
+package example
+
+import (
+{{- if ne .HTTPFramework "gin" }}
+	"encoding/json"
+{{- end }}
+	"log/slog"
+	"net/http"
+	"time"
+
+{{- if .HasDatabase }}
+	"{{.ModulePath}}/internal/database"
+{{- end }}
+{{- if .HasWorker }}
+	"{{.ModulePath}}/internal/worker"
+{{- end }}
+{{- if eq .HTTPFramework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- end }}
+)
+
+type Handler struct {
+{{- if .HasDatabase }}
+	db     *database.DB
+{{- end }}
+{{- if .HasWorker }}
+	worker *worker.RiverWorker
+{{- end }}
+	logger *slog.Logger
+}
+
+func NewHandler(
+{{- if .HasDatabase }}
+	db *database.DB,
+{{- end }}
+{{- if .HasWorker }}
+	worker *worker.RiverWorker,
+{{- end }}
+	logger *slog.Logger,
+) *Handler {
+	return &Handler{
+{{- if .HasDatabase }}
+		db:     db,
+{{- end }}
+{{- if .HasWorker }}
+		worker: worker,
+{{- end }}
+		logger: logger,
+	}
+}
+
+{{- if eq .HTTPFramework "gin" }}
+
+func (h *Handler) Health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "ok",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) Ready(c *gin.Context) {
+{{- if .HasDatabase }}
+	if h.db != nil {
+		if err := h.db.Ping(c.Request.Context()); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "database unavailable",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
+{{- end }}
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ready",
+	})
+}
+
+func (h *Handler) Ping(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"message": "pong",
+	})
+}
+
+{{- if .HasWorker }}
+type EnqueueJobRequest struct {
+	Message string `json:"message"`
+}
+
+func (h *Handler) EnqueueJob(c *gin.Context) {
+	var req EnqueueJobRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Message == "" {
+		req.Message = "Default river background job"
+	}
+
+	_, err := h.worker.Client().Insert(c.Request.Context(), worker.ExampleArgs{
+		Message: req.Message,
+	}, nil)
+	if err != nil {
+		h.logger.Error("failed to enqueue job", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue job: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":  "job_enqueued",
+		"message": req.Message,
+	})
+}
+{{- end }}
+
+{{- else }}
+
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":    "ok",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+{{- if .HasDatabase }}
+	if h.db != nil {
+		if err := h.db.Ping(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "database unavailable",
+				"error":  err.Error(),
+			})
+			return
+		}
+	}
+{{- end }}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ready",
+	})
+}
+
+func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"message": "pong",
+	})
+}
+
+{{- if .HasWorker }}
+type EnqueueJobRequest struct {
+	Message string `json:"message"`
+}
+
+func (h *Handler) EnqueueJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req EnqueueJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+
+	if req.Message == "" {
+		req.Message = "Default background job"
+	}
+
+	_, err := h.worker.Client().Insert(r.Context(), worker.ExampleArgs{
+		Message: req.Message,
+	}, nil)
+	if err != nil {
+		h.logger.Error("failed to enqueue job", "error", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "failed to enqueue job: " + err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "job_enqueued",
+		"message": req.Message,
+	})
+}
+{{- end }}
+
+{{- end }}

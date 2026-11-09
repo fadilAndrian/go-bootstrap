@@ -1,0 +1,24 @@
+package worker
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/riverqueue/river"
+)
+
+type ExampleArgs struct {
+	Message string `json:"message"`
+}
+
+func (ExampleArgs) Kind() string { return "example_job" }
+
+type ExampleWorker struct {
+	river.WorkerDefaults[ExampleArgs]
+	logger *slog.Logger
+}
+
+func (w *ExampleWorker) Work(ctx context.Context, job *river.Job[ExampleArgs]) error {
+	w.logger.Info("processing example river job", "message", job.Args.Message)
+	return nil
+}

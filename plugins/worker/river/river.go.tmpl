@@ -1,0 +1,69 @@
+package worker
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"{{.ModulePath}}/internal/config"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
+)
+
+type RiverWorker struct {
+	client *river.Client[pgx.Tx]
+	logger *slog.Logger
+}
+
+func NewRiverWorker(ctx context.Context, cfg config.WorkerConfig, pool *pgxpool.Pool, logger *slog.Logger) (*RiverWorker, error) {
+	// Auto-migrate River queue tables if not present
+	driver := riverpgxv5.New(pool)
+	migrator, err := rivermigrate.New(driver, nil)
+	if err == nil {
+		if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+			logger.Warn("river auto-migration warning", "error", err)
+		} else {
+			logger.Info("river queue schema migrated successfully")
+		}
+	}
+
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &ExampleWorker{logger: logger})
+
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+
+	riverClient, err := river.NewClient(driver, &river.Config{
+		Workers: workers,
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: concurrency},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create river client: %w", err)
+	}
+
+	return &RiverWorker{
+		client: riverClient,
+		logger: logger,
+	}, nil
+}
+
+func (w *RiverWorker) Start(ctx context.Context) error {
+	w.logger.Info("starting river background worker")
+	return w.client.Start(ctx)
+}
+
+func (w *RiverWorker) Stop(ctx context.Context) error {
+	w.logger.Info("stopping river background worker and draining in-flight jobs")
+	return w.client.Stop(ctx)
+}
+
+func (w *RiverWorker) Client() *river.Client[pgx.Tx] {
+	return w.client
+}

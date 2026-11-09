@@ -1,0 +1,159 @@
+package bootstrap
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	nethttp "net/http"
+	"os"
+
+	"{{.ModulePath}}/internal/config"
+{{- if .HasDatabase }}
+	"{{.ModulePath}}/internal/database"
+{{- end }}
+	"{{.ModulePath}}/internal/http"
+	"{{.ModulePath}}/internal/routes"
+{{- if .HasWorker }}
+	"{{.ModulePath}}/internal/worker"
+{{- end }}
+)
+
+type App struct {
+	cfg        *config.Config
+	logger     *slog.Logger
+	lifecycle  *Lifecycle
+{{- if .HasDatabase }}
+	db         *database.DB
+{{- end }}
+{{- if .HasWorker }}
+	worker     *worker.RiverWorker
+{{- end }}
+	httpServer *http.Server
+}
+
+// New creates and wires the application components in dependency order.
+func New(ctx context.Context, cfg *config.Config) (*App, error) {
+	// Initialize structured logger
+	var logHandler slog.Handler
+	if cfg.Log.Format == "json" {
+		logHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})
+	} else {
+		logHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})
+	}
+	logger := slog.New(logHandler)
+
+	lifecycle := NewLifecycle(logger)
+
+{{- if .HasDatabase }}
+	// Initialize database
+	logger.Info("initializing database connection")
+	db, err := database.Connect(ctx, cfg.Database, logger)
+	if err != nil {
+		lifecycle.Shutdown(context.Background())
+		return nil, fmt.Errorf("database init failed: %w", err)
+	}
+	lifecycle.RegisterCleanup("database", func(ctx context.Context) error {
+		return db.Close()
+	})
+{{- end }}
+
+{{- if .HasWorker }}
+	// Initialize background worker
+	logger.Info("initializing worker")
+	workerInstance, err := worker.NewRiverWorker(ctx, cfg.Worker, db.Pool(), logger)
+	if err != nil {
+		lifecycle.Shutdown(context.Background())
+		return nil, fmt.Errorf("worker init failed: %w", err)
+	}
+{{- end }}
+
+	// Initialize HTTP router and routes
+	router := http.NewRouter()
+	deps := routes.Dependencies{
+{{- if .HasDatabase }}
+		DB: db,
+{{- end }}
+{{- if .HasWorker }}
+		Worker: workerInstance,
+{{- end }}
+		Logger: logger,
+	}
+	routes.Register(router, deps)
+
+	httpServer := http.NewServer(cfg.Server, router)
+
+	return &App{
+		cfg:        cfg,
+		logger:     logger,
+		lifecycle:  lifecycle,
+{{- if .HasDatabase }}
+		db:         db,
+{{- end }}
+{{- if .HasWorker }}
+		worker:     workerInstance,
+{{- end }}
+		httpServer: httpServer,
+	}, nil
+}
+
+// Run starts the application servers and blocks until termination or error.
+func (a *App) Run(ctx context.Context) error {
+{{- if .HasWorker }}
+	// 1. Start worker in background
+	if a.worker != nil {
+		go func() {
+			if err := a.worker.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				a.logger.Error("worker runtime error", "error", err)
+			}
+		}()
+	}
+{{- end }}
+
+	// 2. Start HTTP server in background
+	serverErrChan := make(chan error, 1)
+	go func() {
+		a.logger.Info("starting HTTP server", "host", a.cfg.Server.Host, "port", a.cfg.Server.Port)
+		if err := a.httpServer.Start(); err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
+			serverErrChan <- err
+		}
+	}()
+
+	// 3. Wait for signal or runtime failure
+	select {
+	case <-ctx.Done():
+		a.logger.Info("shutdown signal received, initiating graceful shutdown")
+	case err := <-serverErrChan:
+		a.logger.Error("HTTP server failed unexpectedly", "error", err)
+	}
+
+	// 4. Coordinated bounded shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
+	defer cancel()
+
+	// Drain HTTP requests first
+	a.logger.Info("draining active HTTP requests")
+	if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
+		a.logger.Error("HTTP server shutdown encountered error", "error", err)
+	}
+
+{{- if .HasWorker }}
+	// Drain workers next
+	if a.worker != nil {
+		a.logger.Info("draining worker in-flight jobs")
+		if err := a.worker.Stop(shutdownCtx); err != nil {
+			a.logger.Error("worker shutdown encountered error", "error", err)
+		}
+	}
+{{- end }}
+
+	// Close database and other shared resources last
+	errs := a.lifecycle.Shutdown(shutdownCtx)
+	if len(errs) > 0 {
+		a.logger.Warn("lifecycle shutdown finished with errors", "count", len(errs))
+	} else {
+		a.logger.Info("graceful shutdown completed cleanly")
+	}
+
+	return nil
+}

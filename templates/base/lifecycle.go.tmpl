@@ -1,0 +1,57 @@
+package bootstrap
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+)
+
+// CleanupFunc is executed during shutdown or startup failure rollback.
+type CleanupFunc func(ctx context.Context) error
+
+type cleanupItem struct {
+	name string
+	fn   CleanupFunc
+}
+
+// Lifecycle coordinates resource startup rollback and ordered shutdown.
+type Lifecycle struct {
+	mu       sync.Mutex
+	cleanups []cleanupItem
+	logger   *slog.Logger
+}
+
+// NewLifecycle creates a new Lifecycle coordinator.
+func NewLifecycle(logger *slog.Logger) *Lifecycle {
+	return &Lifecycle{
+		logger: logger,
+	}
+}
+
+// RegisterCleanup registers a cleanup function.
+// Cleanups are executed in reverse order of registration (LIFO).
+func (l *Lifecycle) RegisterCleanup(name string, fn CleanupFunc) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.cleanups = append(l.cleanups, cleanupItem{name: name, fn: fn})
+}
+
+// Shutdown executes all registered cleanups in reverse order within the given context.
+func (l *Lifecycle) Shutdown(ctx context.Context) []error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var errors []error
+	for i := len(l.cleanups) - 1; i >= 0; i-- {
+		item := l.cleanups[i]
+		l.logger.Info("shutting down resource", "resource", item.name)
+		if err := item.fn(ctx); err != nil {
+			wrappedErr := fmt.Errorf("cleanup resource %q: %w", item.name, err)
+			l.logger.Error("cleanup error", "resource", item.name, "error", wrappedErr)
+			errors = append(errors, wrappedErr)
+		}
+	}
+	l.cleanups = nil
+	return errors
+}

@@ -1,0 +1,26 @@
+app:
+  name: "{{.ProjectName}}"
+  env: "development"
+
+server:
+  host: "0.0.0.0"
+  port: "8080"
+  shutdown_timeout: "10s"
+
+{{- if .HasDatabase }}
+database:
+  url: "postgres://postgres:postgres@localhost:5432/{{.ProjectName}}?sslmode=disable"
+  max_open_conns: 25
+  max_idle_conns: 10
+  conn_max_lifetime: "15m"
+  skip_ping: false
+{{- end }}
+
+{{- if .HasWorker }}
+worker:
+  concurrency: 10
+{{- end }}
+
+log:
+  level: "info"
+  format: "text"

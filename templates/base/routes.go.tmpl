@@ -1,0 +1,97 @@
+package routes
+
+import (
+	"log/slog"
+
+{{- if .HasDatabase }}
+	"{{.ModulePath}}/internal/database"
+{{- end }}
+{{- if .HasWorker }}
+	"{{.ModulePath}}/internal/worker"
+{{- end }}
+	"{{.ModulePath}}/modules/example"
+
+{{- if eq .HTTPFramework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .HTTPFramework "chi" }}
+	"github.com/go-chi/chi/v5"
+{{- else }}
+	"net/http"
+{{- end }}
+)
+
+type Dependencies struct {
+{{- if .HasDatabase }}
+	DB *database.DB
+{{- end }}
+{{- if .HasWorker }}
+	Worker *worker.RiverWorker
+{{- end }}
+	Logger *slog.Logger
+}
+
+{{- if eq .HTTPFramework "gin" }}
+func Register(router *gin.Engine, deps Dependencies) {
+	h := example.NewHandler(
+{{- if .HasDatabase }}
+		deps.DB,
+{{- end }}
+{{- if .HasWorker }}
+		deps.Worker,
+{{- end }}
+		deps.Logger,
+	)
+
+	router.GET("/health", h.Health)
+	router.GET("/ready", h.Ready)
+
+	api := router.Group("/api/v1")
+	{
+		api.GET("/ping", h.Ping)
+{{- if .HasWorker }}
+		api.POST("/jobs", h.EnqueueJob)
+{{- end }}
+	}
+}
+{{- else if eq .HTTPFramework "chi" }}
+func Register(router chi.Router, deps Dependencies) {
+	h := example.NewHandler(
+{{- if .HasDatabase }}
+		deps.DB,
+{{- end }}
+{{- if .HasWorker }}
+		deps.Worker,
+{{- end }}
+		deps.Logger,
+	)
+
+	router.Get("/health", h.Health)
+	router.Get("/ready", h.Ready)
+
+	router.Route("/api/v1", func(r chi.Router) {
+		r.Get("/ping", h.Ping)
+{{- if .HasWorker }}
+		r.Post("/jobs", h.EnqueueJob)
+{{- end }}
+	})
+}
+{{- else }}
+func Register(router *http.ServeMux, deps Dependencies) {
+	h := example.NewHandler(
+{{- if .HasDatabase }}
+		deps.DB,
+{{- end }}
+{{- if .HasWorker }}
+		deps.Worker,
+{{- end }}
+		deps.Logger,
+	)
+
+	router.HandleFunc("GET /health", h.Health)
+	router.HandleFunc("GET /ready", h.Ready)
+	router.HandleFunc("GET /api/v1/ping", h.Ping)
+{{- if .HasWorker }}
+	router.HandleFunc("POST /api/v1/jobs", h.EnqueueJob)
+{{- end }}
+}
+{{- end }}
