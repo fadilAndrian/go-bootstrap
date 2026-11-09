@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/konnco/go-bootstrap/internal/core"
+	"github.com/fadilAndrian/go-bootstrap/internal/core"
 	"github.com/spf13/cobra"
 )
 

@@ -1,4 +1,4 @@
-module github.com/konnco/go-bootstrap
+module github.com/fadilAndrian/go-bootstrap
 
 go 1.27.1
 

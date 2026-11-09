@@ -19,13 +19,13 @@ Select the components you need---database, HTTP framework, background worker---a
 ## Installation
 
 ```bash
-go install github.com/konnco/go-bootstrap/cmd/go-bootstrap@latest
+go install github.com/fadilAndrian/go-bootstrap/cmd/go-bootstrap@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/konnco/go-bootstrap.git
+git clone https://github.com/fadilAndrian/go-bootstrap.git
 cd go-bootstrap
 go build -o bin/go-bootstrap ./cmd/go-bootstrap
 ```

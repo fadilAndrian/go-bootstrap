@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/konnco/go-bootstrap/internal/core"
+	"github.com/fadilAndrian/go-bootstrap/internal/core"
 	"github.com/spf13/cobra"
 )
 

@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 
-	"github.com/konnco/go-bootstrap/internal/renderer"
+	"github.com/fadilAndrian/go-bootstrap/internal/renderer"
 )
 
 //go:embed cmd_serve_main.go.tmpl

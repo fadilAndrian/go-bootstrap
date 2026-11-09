@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/konnco/go-bootstrap/templates/base"
+	"github.com/fadilAndrian/go-bootstrap/templates/base"
 )
 
 type GenerateOptions struct {

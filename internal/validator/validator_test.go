@@ -3,7 +3,7 @@ package validator
 import (
 	"testing"
 
-	"github.com/konnco/go-bootstrap/internal/core"
+	"github.com/fadilAndrian/go-bootstrap/internal/core"
 )
 
 func TestValidateCompatibility(t *testing.T) {
