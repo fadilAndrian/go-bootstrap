@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,6 +53,8 @@ type LogConfig struct {
 }
 
 func Load() (*Config, error) {
+	loadDotEnv(".env")
+
 	cfg := &Config{
 		App: AppConfig{
 			Name: getEnv("APP_NAME", "{{.ProjectName}}"),
@@ -81,6 +85,32 @@ func Load() (*Config, error) {
 		},
 	}
 	return cfg, nil
+}
+
+func loadDotEnv(filenames ...string) {
+	for _, filename := range filenames {
+		f, err := os.Open(filename)
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				val := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
+				if os.Getenv(key) == "" {
+					_ = os.Setenv(key, val)
+				}
+			}
+		}
+	}
 }
 
 func getEnv(key, defaultVal string) string {
